@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version="$INPUT_VERSION"
+
+# Resolve and validate version
+if [[ "$version" == "latest" ]]; then
+  version=$(gh api repos/iorate/wepub/releases/latest --jq '.tag_name')
+fi
+version="${version#v}"
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "::error::Invalid version: \"$version\""
+  exit 1
+fi
+
+# Map runner platform to release artifact parameters
+case "$RUNNER_OS-$RUNNER_ARCH" in
+  Linux-X64)   target=x86_64-unknown-linux-gnu  archive_ext=.tar.xz binary_ext=     ;;
+  Linux-ARM64) target=aarch64-unknown-linux-gnu archive_ext=.tar.xz binary_ext=     ;;
+  macOS-X64)   target=x86_64-apple-darwin       archive_ext=.tar.xz binary_ext=     ;;
+  macOS-ARM64) target=aarch64-apple-darwin      archive_ext=.tar.xz binary_ext=     ;;
+  Windows-X64) target=x86_64-pc-windows-msvc    archive_ext=.zip    binary_ext=.exe ;;
+  *)
+    echo "::error::Unsupported platform: $RUNNER_OS $RUNNER_ARCH"
+    exit 1
+    ;;
+esac
+
+# Check tool cache
+tool_dir="$RUNNER_TOOL_CACHE/wepub/$version/$RUNNER_ARCH"
+if [[ -f "$tool_dir/wepub$binary_ext" ]]; then
+  echo "wepub $version is already cached"
+  echo "$tool_dir" >> "$GITHUB_PATH"
+  echo "version=$version" >> "$GITHUB_OUTPUT"
+  exit 0
+fi
+
+# Download archive and checksum
+archive="wepub-$target$archive_ext"
+base_url="https://github.com/iorate/wepub/releases/download/v$version"
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+echo "Downloading $base_url/$archive"
+curl -fsSL "$base_url/$archive" -o "$tmpdir/$archive"
+curl -fsSL "$base_url/$archive.sha256" -o "$tmpdir/$archive.sha256"
+
+# Verify checksum
+if command -v sha256sum &>/dev/null; then
+  (cd "$tmpdir" && sha256sum -c "$archive.sha256")
+else
+  (cd "$tmpdir" && shasum -a 256 -c "$archive.sha256")
+fi
+
+# Extract binary into tool cache
+mkdir -p "$tool_dir"
+if [[ "$archive_ext" == ".tar.xz" ]]; then
+  # Tarballs nest the binary under a wepub-$target/ directory.
+  tar -xJf "$tmpdir/$archive" --strip-components=1 -C "$tool_dir" "wepub-$target/wepub$binary_ext"
+else
+  # The zip places the binary at the archive root.
+  unzip -q "$tmpdir/$archive" "wepub$binary_ext" -d "$tool_dir"
+fi
+
+echo "$tool_dir" >> "$GITHUB_PATH"
+echo "version=$version" >> "$GITHUB_OUTPUT"
+echo "Installed wepub $version"

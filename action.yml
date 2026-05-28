@@ -1,0 +1,32 @@
+name: setup-wepub
+description: Install the wepub CLI for publishing browser extensions to web stores
+
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  version:
+    description: 'Version to install (e.g., "0.4.3", "v0.4.3", or "latest")'
+    default: latest
+    required: false
+  token:
+    description: GitHub token for API requests (avoids rate limiting when resolving "latest")
+    default: ${{ github.token }}
+    required: false
+
+outputs:
+  version:
+    description: The version of wepub that was installed
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install wepub
+      id: install
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+      shell: bash
